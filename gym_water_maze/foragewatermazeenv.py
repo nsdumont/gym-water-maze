@@ -10,14 +10,15 @@ from gymnasium import spaces
 
 
 # adapted from https://github.com/rpinsler/gym-maze/blob/master/gym_maze/envs/maze.py
-class WaterMazeEnv(gym.Env):
+class ForageWaterMazeEnv(gym.Env):
     metadata = {'render_modes': ['human', 'rgb_array']}
 
     def __init__(self,
                  radius = 6,
                  goal_radius = 1,
                  action_radius = 1,
-                 reward_type='sparse',
+                 n_forage_spots = 2,
+                 dt= 0.001,
                  start = 'S', #S,E,W,N
                  max_steps = 100,
                  render_mode = 'human',
@@ -26,8 +27,17 @@ class WaterMazeEnv(gym.Env):
         """Initialize the maze. DType: list"""
         self.max_steps = max_steps
         self.radius = radius
-        self.reward_type = reward_type
+        self.n_forage_spots = n_forage_spots
+        if n_forage_spots==1:
+            self.reward_base_probs = np.array([0.8])
+        elif n_forage_spots==2:
+            self.reward_base_probs = np.array([0.1,0.4])
+        else:
+            self.reward_base_probs = np.random.rand(n_forage_spots)
         self.goal_radius = goal_radius
+        self.dt = dt
+        self.reward_times = np.zeros(n_forage_spots)
+        self.reward_probs = np.zeros(n_forage_spots)
         if start=='S':
             self.init_state = np.array([0,-radius*0.8])
         elif start=='N':
@@ -36,7 +46,13 @@ class WaterMazeEnv(gym.Env):
             self.init_state = np.array([-radius*0.8,0])
         elif start=='E':
             self.init_state = np.array([radius*0.8,0])
-        self.goal_state = np.array([0.75,0.75])*radius/np.sqrt(2)
+        if n_forage_spots==1:
+            self.goal_states = np.array([[0.75,0.75]])
+        elif n_forage_spots==2:
+            self.goal_states = np.array([[0.75,0.75], [-0.75,0.75]])
+        else:
+            self.goal_states = np.random.rand(n_forage_spots,2)*2 - 1
+        self.goal_states = self.goal_states*radius/np.sqrt(2)
 
         self.render_trace = render_trace
         self.render_mode = render_mode
@@ -64,14 +80,22 @@ class WaterMazeEnv(gym.Env):
                 new_state = self.state + rs[np.where(rs>=0)[0][0]]*action
         self.state = new_state
         self.traces.append(self.state)
-        dist = np.sqrt(np.sum( (self.state-self.goal_state)**2 ))
-        if dist <= self.goal_radius:
-            reward += 1 - 0.9*(self.num_steps/self.max_steps)
-            terminated = True
-        else:
-            terminated = False
-        if self.reward_type == "dense":
-            reward = np.exp(-dist + np.log(1 - 0.9*(self.num_steps/self.max_steps)))
+        self.reward_times += self.dt
+        dists = np.sqrt(np.sum( (self.state-self.goal_states)**2, axis=-1 ))
+        self.reward_probs = 1 - (1 - self.reward_base_probs)**(self.reward_times + 1)
+        if np.any(dists <= self.goal_radius):
+            idx = np.arange(self.n_forage_spots) == np.argmin(dists)
+            if np.random.rand() < self.reward_probs[idx].item():
+                reward  = 1
+            else:
+                reward = 0
+            if self.reward_times[idx]>self.dt:
+                self.reward_times[idx] = 0
+            else:
+                self.reward_times[idx] -= 2*self.dt
+
+        terminated = False
+
         if self.num_steps >= self.max_steps:
             truncated = True
         else:
@@ -85,6 +109,8 @@ class WaterMazeEnv(gym.Env):
         self.seed = seed
         self.num_steps = 0
         self.state = self.init_state.copy()
+        self.reward_times = np.zeros(self.n_forage_spots)
+        self.reward_probs = np.zeros(self.n_forage_spots)
         # Clean the list of ax_imgs, the buffer for generating videos
         self.ax_imgs = []
         # Clean the traces of the trajectory
@@ -93,8 +119,6 @@ class WaterMazeEnv(gym.Env):
 
     def render(self,**kwargs):
         fig = plt.gcf()
-        if self.render_mode=='rgb_array':
-            canvas = FigureCanvasAgg(fig)
         ax = plt.gca()
         ax.set_xlim([-self.radius - 0.1, self.radius + 0.1])
         ax.set_aspect('equal')
@@ -103,8 +127,9 @@ class WaterMazeEnv(gym.Env):
         xs = self.radius*np.cos(angles)
         ys = self.radius*np.sin(angles)
         ax.plot(xs,ys, linewidth=2, color='k')
-        goal_circ = plt.Circle(self.goal_state, self.goal_radius, color='green',clip_on=True )
-        ax.add_patch(goal_circ)
+        for i, goal_state in enumerate(self.goal_states):
+            goal_circ = plt.Circle(goal_state, self.goal_radius, color=plt.cm.Greens(self.reward_probs[i]),clip_on=True )
+            ax.add_patch(goal_circ)
 
         if self.render_trace:
             trace = np.array(self.traces)
@@ -114,10 +139,11 @@ class WaterMazeEnv(gym.Env):
             return fig
         elif self.render_mode=='rgb_array':
             # Retrieve a view on the renderer buffer
-            canvas.draw()
-            buf = canvas.buffer_rgba()
-            # convert to a NumPy array
-            return np.asarray(buf)
+            fig.canvas.draw()
+            buf = fig.canvas.tostring_rgb()
+            ncols, nrows = fig.canvas.get_width_height()
+            image = np.frombuffer(buf, dtype=np.uint8).reshape(nrows, ncols, 3)
+            return image
 
 
 
