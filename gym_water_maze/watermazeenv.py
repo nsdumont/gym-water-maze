@@ -17,7 +17,7 @@ class WaterMazeEnv(gym.Env):
                  radius = 6,
                  goal_radius = 1,
                  action_radius = 1,
-                 reward_type='sparse',
+                 reward_type='sparse', #sparse, dense, active
                  start = 'S', #S,E,W,N
                  max_steps = 100,
                  render_mode = 'human',
@@ -46,11 +46,19 @@ class WaterMazeEnv(gym.Env):
         # than storing the frames and creating an animation at the end
         self.live_display = live_display
 
-        self.action_space = spaces.Box(-action_radius, action_radius, (2,), dtype="float64")
+        if self.reward_type == 'active':
+            self.action_space = spaces.Box(-action_radius, action_radius, (3,), dtype="float64")
+            self.penalty = -0.05
+        else:
+            self.action_space = spaces.Box(-action_radius, action_radius, (2,), dtype="float64")
+
         self.observation_space = spaces.Box(-radius, radius, (2,), dtype="float64")
 
 
     def step(self, action):
+        if self.reward_type == 'active':
+            lick = action[-1] > 0
+            action = action[:-1]
         self.num_steps += 1
         reward = 0
         new_state = self.state + action
@@ -65,13 +73,23 @@ class WaterMazeEnv(gym.Env):
         self.state = new_state
         self.traces.append(self.state)
         dist = np.sqrt(np.sum( (self.state-self.goal_state)**2 ))
-        if dist <= self.goal_radius:
-            reward += 1 - 0.9*(self.num_steps/self.max_steps)
+        if self.reward_type == "dense":
+            reward = np.exp(-dist + np.log(1 - 0.9*(self.num_steps/self.max_steps)))
+        else:
+            if self.reward_type == "sparse":
+                if dist < self.goal_radius:
+                    reward += 1 - 0.9*(self.num_steps/self.max_steps)
+            elif lick: # active
+                if dist < self.goal_radius:
+                    reward += 1 - 0.9*(self.num_steps/self.max_steps)
+                else:
+                    reward -= self.penalty
+
+        if dist < self.goal_radius:
             terminated = True
         else:
             terminated = False
-        if self.reward_type == "dense":
-            reward = np.exp(-dist + np.log(1 - 0.9*(self.num_steps/self.max_steps)))
+
         if self.num_steps >= self.max_steps:
             truncated = True
         else:

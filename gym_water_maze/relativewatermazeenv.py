@@ -18,11 +18,12 @@ class RelativeWaterMazeEnv(gym.Env):
                  goal_radius = 1,
                  action_radius = 1,
                  n_spots = 2,
-                 dtheta_spots = 0.3,
+                 dtheta_spots = 0.5,
                  goal_idx = 0,
                  dt= 0.001,
                  max_steps = 100,
                  render_mode = 'human',
+                 reward_type= 'sparse', # sparse or active
                  live_display=False,
                  render_trace=False):
         """Initialize the maze. DType: list"""
@@ -50,11 +51,21 @@ class RelativeWaterMazeEnv(gym.Env):
         # than storing the frames and creating an animation at the end
         self.live_display = live_display
 
-        self.action_space = spaces.Box(-action_radius, action_radius, (2,), dtype="float64")
-        self.observation_space = spaces.Box(-radius, radius, (2,), dtype="float64")
+        self.reward_type = reward_type
+        if self.reward_type == 'active':
+            self.action_space = spaces.Box(-action_radius, action_radius, (3,), dtype="float64")
+            self.penalty = -0.05
+        else:
+            self.action_space = spaces.Box(-action_radius, action_radius, (2,), dtype="float64")
+        self.observation_space = spaces.Box(-radius, radius, (3,), dtype="float64")
 
 
     def step(self, action):
+        if self.reward_type == 'active':
+            lick = action[-1] > 0
+            action = action[:-1]
+        else:
+            lick = True
         self.num_steps += 1
         reward = 0
         new_state = self.state + action
@@ -68,19 +79,22 @@ class RelativeWaterMazeEnv(gym.Env):
                 new_state = self.state + rs[np.where(rs>=0)[0][0]]*action
         self.state = new_state
         self.traces.append(self.state)
+        all_dist = np.sqrt(np.sum( (self.state-self.goal_states)**2, axis=-1 ))
+        at_goal = np.any(all_dist<self.goal_radius)
         dist = np.sqrt(np.sum( (self.state-self.goal_states[self.goal_idx])**2, axis=-1 ))
         terminated = False
-        if dist <= self.goal_radius:
-            reward  = 1
+        if lick and (dist <= self.goal_radius):
+            reward = 1 - 0.9*(self.num_steps/self.max_steps)
             terminated = True
-
+        if lick and (dist > self.goal_radius):
+            reward = self.penalty
         if self.num_steps >= self.max_steps:
             truncated = True
         else:
             truncated = False
         # Additional info
         info = {}
-        return self.state, reward, terminated, truncated, info
+        return np.concatenate([self.state,[at_goal]]), reward, terminated, truncated, info
 
 
     def reset(self, seed=None, **kwargs):
@@ -97,7 +111,9 @@ class RelativeWaterMazeEnv(gym.Env):
         self.ax_imgs = []
         # Clean the traces of the trajectory
         self.traces = [self.init_state]
-        return self.state, {}
+        all_dist = np.sqrt(np.sum((self.state - self.goal_states) ** 2, axis=-1))
+        at_goal = np.any(all_dist < self.goal_radius)
+        return np.concatenate([self.state,[at_goal]]), {}
 
     def render(self,**kwargs):
         fig = plt.gcf()

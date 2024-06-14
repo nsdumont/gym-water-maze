@@ -15,20 +15,21 @@ import gym_water_maze
 # env_name = 'WaterMaze-v0'
 # n_train_steps = 10000
 
-# env_name = 'ForageWaterMaze-v0'
-# n_train_steps = 50000
-
-env_name = 'RelativeWaterMaze-v0'
+env_name = 'ForageWaterMaze-v0'
 n_train_steps = 50000
 
-env = gym.make(env_name,render_trace=True)
+# env_name = 'RelativeWaterMaze-v0'
+# n_train_steps = 50000
+
+reward_type = "active"
+env = gym.make(env_name,render_trace=True, reward_type=reward_type)
 obs, _ = env.reset()
 for i in range(100):
     a = 2*np.random.rand(2) - 1
     _,_,_,_,_ = env.step(a)
 env.render()
 
-env = gym.make(env_name,render_trace=True)
+env = gym.make(env_name,render_trace=True, reward_type=reward_type)
 log_dir = "./watermazetorch/"
 os.makedirs(log_dir, exist_ok=True)
 env = Monitor(env, log_dir)
@@ -40,7 +41,7 @@ model = PPO(MlpPolicy, env, verbose=0, learning_rate=0.0003,
             max_grad_norm=0.8)
 
 # Use a separate environement for evaluation
-eval_env = gym.make(env_name, render_mode="rgb_array")
+eval_env = gym.make(env_name, render_mode="rgb_array", reward_type=reward_type)
 
 # Random Agent, before training
 mean_reward, std_reward = evaluate_policy(model, eval_env, n_eval_episodes=10)
